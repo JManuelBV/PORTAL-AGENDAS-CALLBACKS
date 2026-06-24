@@ -277,6 +277,22 @@
 
     .hour-cell:hover{background:#fdf7f1;}
 
+    .urgent-slot-note{
+      position:absolute;
+      top:6px;
+      left:8px;
+      right:8px;
+      font-size:.72rem;
+      font-weight:800;
+      color:#7e4f3e;
+      background:#fff7ed;
+      border:1px solid #ead9c7;
+      border-radius:8px;
+      padding:4px 6px;
+      text-align:center;
+      pointer-events:none;
+    }
+
     .hour-cell.disabled-slot{
       background:#fbf8f4;
       cursor:not-allowed;
@@ -472,6 +488,10 @@
 
         <button class="btn btn-outline-dark w-100 fw-bold" onclick="goBackToMainMenu()">
           <i class="bi bi-box-arrow-left me-2"></i>SALIR
+        </button>
+
+        <button id="adminModeButton" class="btn btn-outline-danger w-100 fw-bold mt-2 hidden" onclick="enterAdminMode()">
+          <i class="bi bi-shield-lock me-2"></i>MODO ADMIN
         </button>
       </div>
 
@@ -792,7 +812,7 @@
 
             <div class="col-md-3">
               <label class="form-label small fw-bold">Hora fin PR</label>
-              <input type="time" id="formEndTime" class="form-control" min="08:00" max="16:00" step="300">
+              <input type="time" id="formEndTime" class="form-control" min="08:00" max="17:00" step="300">
             </div>
 
             <div class="col-md-3">
@@ -828,10 +848,11 @@
     const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzB1qBTCkMh6Uxt7w0J_UN0KlFZ8UG0xt60EojFFTUx03MIpAZMDTj6AHIUzg6L53AA/exec";
 
     const START_HOUR = 8;
-    const END_HOUR = 16;
+    const END_HOUR = 17;
     const MAX_APPOINTMENTS_PER_HOUR_CELL = 2;
     const DEFAULT_APPOINTMENT_MINUTES = 40;
     const AUTO_REFRESH_MS = 30000;
+    const ADMIN_MODE_PASSWORD = "1401000515";
 
     const ALL_ATTORNEYS = [
       "ROBERTO LIZARRA",
@@ -885,6 +906,7 @@
     let currentClientStatus = null;
     let currentSlotAtty = "";
     let currentSlotTime = "";
+    let adminMode = false;
 
     document.addEventListener("DOMContentLoaded", () => {
       appointmentModal = new bootstrap.Modal(document.getElementById("appointmentModal"));
@@ -921,15 +943,45 @@
       if(isCS){
         document.getElementById("areaActiveCard").classList.add("hidden");
         document.getElementById("csBackButton").classList.remove("hidden");
+        document.getElementById("adminModeButton")?.classList.add("hidden");
       }else{
         document.getElementById("areaActiveCard").classList.remove("hidden");
         document.getElementById("csBackButton").classList.add("hidden");
-        document.getElementById("areaRulesText").innerHTML = "Callbacks: puede agendar con cualquier Atty. Sábado y domingo bloqueados para todos.";
+        document.getElementById("areaRulesText").innerHTML = adminMode
+          ? "Callbacks · Modo administrador activo."
+          : "Callbacks: puede agendar con cualquier Atty. Sábado y domingo bloqueados para todos.";
+        document.getElementById("adminModeButton").classList.remove("hidden");
       }
 
       switchToCalendarOnly();
       renderAll();
       hardRefresh();
+    }
+
+    async function enterAdminMode(){
+      const result = await Swal.fire({
+        title:"Modo administrador",
+        text:"Ingresa la clave de administrador.",
+        input:"password",
+        inputPlaceholder:"Clave",
+        showCancelButton:true,
+        confirmButtonText:"Entrar",
+        cancelButtonText:"Cancelar",
+        inputValidator:value => !value ? "Ingresa la clave." : undefined
+      });
+
+      if(!result.isConfirmed) return;
+
+      if(String(result.value || "").trim() === ADMIN_MODE_PASSWORD){
+        adminMode = true;
+        document.getElementById("selectedAreaBadge").className = "badge bg-danger";
+        document.getElementById("selectedAreaBadge").textContent = "CALLBACKS · ADMIN";
+        document.getElementById("areaRulesText").innerHTML = "Modo administrador activo: puedes forzar duplicados, cambios de Atty y capacidad.";
+        Swal.fire("Activo","Modo administrador activado.","success");
+        renderAll();
+      }else{
+        Swal.fire("Clave incorrecta","No se activó modo administrador.","error");
+      }
     }
 
     function goBackToMainMenu(){
@@ -948,6 +1000,8 @@
         document.getElementById("csBackButton").classList.add("hidden");
         document.getElementById("selectedAreaBadge").className = "badge text-bg-secondary";
         document.getElementById("selectedAreaBadge").textContent = "Sin seleccionar";
+        adminMode = false;
+        document.getElementById("adminModeButton")?.classList.add("hidden");
       });
     }
 
@@ -1140,6 +1194,13 @@
           cell.className = enabled ? "hour-cell" : "hour-cell disabled-slot";
           cell.title = enabled ? "Agendar callback" : "Horario bloqueado";
 
+          if(hour === 16){
+            const note = document.createElement("div");
+            note.className = "urgent-slot-note";
+            note.textContent = "Para casos urgentes";
+            cell.appendChild(note);
+          }
+
           if(enabled) cell.onclick = () => openBooking(atty, slotValue);
 
           col.appendChild(cell);
@@ -1159,6 +1220,7 @@
       }
 
       if(area === "CUSTOMER SERVICE"){
+        if(normalizeTimeString(time) === "16:00") return false;
         if(CS_BLOCKED_ATTORNEYS.includes(atty)) return false;
         if(atty === "ROBERTO LIZARRA" && normalizeTimeString(time) === "12:00") return false;
         return true;
@@ -1594,7 +1656,7 @@
 
       let overridePassword = "";
 
-      if(currentClientStatus && currentClientStatus.fromBacklog && currentClientStatus.available === false){
+      if(currentClientStatus && currentClientStatus.fromBacklog && currentClientStatus.available === false && !adminMode && currentClientStatus.scheduledAtty !== payload.atty){
         const scheduledAtty = currentClientStatus.scheduledAtty || "";
 
         const html = `
@@ -1641,7 +1703,9 @@
         const res = await apiPost({
           action:"saveCallback",
           payload,
-          overridePassword
+          overridePassword,
+          adminOverride:adminMode,
+          adminPassword:adminMode ? ADMIN_MODE_PASSWORD : ""
         });
 
         if(res.success){
@@ -1687,7 +1751,9 @@
           const retry = await apiPost({
             action:"saveCallback",
             payload,
-            overridePassword:(pass.value || "").trim()
+            overridePassword:(pass.value || "").trim(),
+            adminOverride:adminMode,
+            adminPassword:adminMode ? ADMIN_MODE_PASSWORD : ""
           });
 
           showLoading(false);
