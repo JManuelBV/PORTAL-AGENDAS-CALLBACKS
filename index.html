@@ -968,7 +968,6 @@
         document.getElementById("csBackButton").classList.remove("hidden");
         document.getElementById("adminModeButton")?.classList.add("hidden");
         document.getElementById("blockScheduleButton")?.classList.add("hidden");
-        document.getElementById("blockScheduleButton")?.classList.add("hidden");
       }else{
         document.getElementById("areaActiveCard").classList.remove("hidden");
         document.getElementById("csBackButton").classList.add("hidden");
@@ -1029,7 +1028,6 @@
         adminMode = false;
         document.getElementById("adminModeButton")?.classList.add("hidden");
         document.getElementById("blockScheduleButton")?.classList.add("hidden");
-        document.getElementById("blockScheduleButton")?.classList.add("hidden");
       });
     }
 
@@ -1078,14 +1076,25 @@
         return;
       }
 
-      await refreshCalendarAppointmentsOnly(true);
-      await refreshBlocksOnly(false);
+      try{
+        showLoading(true);
+        await Promise.all([
+          refreshCalendarAppointmentsOnly(false),
+          refreshBlocksOnly(false)
+        ]);
 
-      if(currentArea === "CALLBACKS"){
-        if(isViewActive("backlog")) await refreshBacklog(false);
-        if(isViewActive("reports")) await loadAgenda(false);
+        if(currentArea === "CALLBACKS"){
+          if(isViewActive("backlog")) await refreshBacklog(false);
+          if(isViewActive("reports")) await loadAgenda(false);
+        }
+
+        renderAttyColumns();
+        renderAppointmentsInGrid();
+      }finally{
+        showLoading(false);
       }
     }
+
 
     function setDefaultReportDates(){
       const range = getWeekRange(new Date());
@@ -1114,9 +1123,9 @@
       currentViewingYear = currentSelectedDate.getFullYear();
 
       renderAll();
-      refreshCalendarAppointmentsOnly(true);
-      refreshBlocksOnly(false);
+      hardRefresh();
     }
+
 
     function goToToday(){
       currentSelectedDate = new Date();
@@ -1124,16 +1133,16 @@
       currentViewingYear = currentSelectedDate.getFullYear();
 
       renderAll();
-      refreshCalendarAppointmentsOnly(true);
-      refreshBlocksOnly(false);
+      hardRefresh();
     }
+
 
     function selectDate(day){
       currentSelectedDate = new Date(currentViewingYear,currentViewingMonth,day);
       renderAll();
-      refreshCalendarAppointmentsOnly(true);
-      refreshBlocksOnly(false);
+      hardRefresh();
     }
+
 
     function changeMonth(offset){
       currentViewingMonth += offset;
@@ -1215,20 +1224,25 @@
       return (blockedSlots || []).find(block => {
         const blockDate = normalizeDateToYMD(block.date);
         if(blockDate !== dateYMD) return false;
-        if(block.atty !== "ALL" && block.atty !== atty) return false;
 
-        const blockStart = timeToMinutes(block.start);
-        const blockEnd = timeToMinutes(block.end);
+        const blockAtty = String(block.atty || "ALL").trim().toUpperCase();
+        if(blockAtty !== "ALL" && blockAtty !== String(atty || "").trim().toUpperCase()) return false;
+
+        const blockStart = timeToMinutes(normalizeTimeString(block.start));
+        const blockEnd = timeToMinutes(normalizeTimeString(block.end));
 
         return start < blockEnd && end > blockStart;
       }) || null;
     }
+
 
     function renderAttyColumns(){
       const grid = document.getElementById("attyGrid");
       const timeCol = document.getElementById("timeLabels");
       grid.innerHTML = "";
       grid.appendChild(timeCol);
+
+      console.log("Bloqueos cargados para el día", toYMD(currentSelectedDate), blockedSlots);
 
       ALL_ATTORNEYS.forEach(atty => {
         const col = document.createElement("div");
@@ -1475,13 +1489,16 @@
         if(!res.success) throw new Error(res.message || "No se pudo cargar agenda");
 
         calendarAppointments = Array.isArray(res.data) ? res.data : [];
-        renderAll();
+
+        renderAttyColumns();
+        renderAppointmentsInGrid();
       }catch(err){
         console.error(err);
       }finally{
         if(showOverlay) showLoading(false);
       }
     }
+
 
     async function refreshBlocksOnly(showOverlay = false){
       if(!backendConfigured()) return;
@@ -1495,13 +1512,17 @@
         if(!res.success) throw new Error(res.message || "No se pudieron cargar bloqueos");
 
         blockedSlots = Array.isArray(res.data) ? res.data : [];
-        renderAll();
+
+        renderAttyColumns();
+        renderAppointmentsInGrid();
       }catch(err){
-        console.error(err);
+        console.error("Error cargando bloqueos", err);
+        blockedSlots = [];
       }finally{
         if(showOverlay) showLoading(false);
       }
     }
+
 
     async function loadAgenda(showOverlay = true){
       if(!backendConfigured()) return;
@@ -2203,15 +2224,13 @@
 
       const raw = String(value).trim();
 
-      let m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
-      if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+      let m = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+      if(m) return `${m[1]}-${pad(Number(m[2]))}-${pad(Number(m[3]))}`;
 
+      // DD/MM/YYYY
       m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
       if(m){
-        const d = pad(Number(m[1]));
-        const mo = pad(Number(m[2]));
-        const y = m[3];
-        return `${y}-${mo}-${d}`;
+        return `${m[3]}-${pad(Number(m[2]))}-${pad(Number(m[1]))}`;
       }
 
       const parsed = new Date(raw);
@@ -2219,6 +2238,7 @@
 
       return raw;
     }
+
 
 
     function formatUSDateValue(value){
