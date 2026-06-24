@@ -277,6 +277,23 @@
 
     .hour-cell:hover{background:#fdf7f1;}
 
+    .admin-block-note{
+      position:absolute;
+      top:6px;
+      left:8px;
+      right:8px;
+      font-size:.72rem;
+      font-weight:800;
+      color:#7c2d12;
+      background:#ffedd5;
+      border:1px solid #fdba74;
+      border-radius:8px;
+      padding:4px 6px;
+      text-align:center;
+      pointer-events:none;
+      z-index:3;
+    }
+
     .urgent-slot-note{
       position:absolute;
       top:6px;
@@ -493,6 +510,10 @@
         <button id="adminModeButton" class="btn btn-outline-danger w-100 fw-bold mt-2 hidden" onclick="enterAdminMode()">
           <i class="bi bi-shield-lock me-2"></i>MODO ADMIN
         </button>
+
+        <button id="blockScheduleButton" class="btn btn-outline-warning w-100 fw-bold mt-2 hidden" onclick="openBlockScheduleModal()">
+          <i class="bi bi-calendar-x me-2"></i>BLOQUEAR HORARIO/DÍA
+        </button>
       </div>
 
       <button id="csBackButton" class="btn btn-outline-dark w-100 fw-bold mini-back-btn hidden" onclick="goBackToMainMenu()">
@@ -596,6 +617,7 @@
         <span class="legend-pill"><span class="legend-dot" style="background:#4f7d5c"></span> Customer Service</span>
         <span class="legend-pill"><span class="legend-dot" style="background:#d69e2e"></span> Cliente nuevo / fuera de backlog</span>
         <span class="legend-pill"><span class="legend-dot" style="background:#8b735f"></span> Bloqueado CS</span>
+        <span class="legend-pill"><span class="legend-dot" style="background:#c05621"></span> Bloqueo admin</span>
         <span class="legend-pill"><span class="legend-dot" style="background:#c53030"></span> Sábado / domingo bloqueado</span>
       </div>
 
@@ -898,6 +920,7 @@
     let backlogData = [];
     let calendarAppointments = [];
     let reportAgendaData = [];
+    let blockedSlots = [];
 
     let appointmentModal;
     let autoRefreshTimer = null;
@@ -944,6 +967,8 @@
         document.getElementById("areaActiveCard").classList.add("hidden");
         document.getElementById("csBackButton").classList.remove("hidden");
         document.getElementById("adminModeButton")?.classList.add("hidden");
+        document.getElementById("blockScheduleButton")?.classList.add("hidden");
+        document.getElementById("blockScheduleButton")?.classList.add("hidden");
       }else{
         document.getElementById("areaActiveCard").classList.remove("hidden");
         document.getElementById("csBackButton").classList.add("hidden");
@@ -977,6 +1002,7 @@
         document.getElementById("selectedAreaBadge").className = "badge bg-danger";
         document.getElementById("selectedAreaBadge").textContent = "CALLBACKS · ADMIN";
         document.getElementById("areaRulesText").innerHTML = "Modo administrador activo: puedes forzar duplicados, cambios de Atty y capacidad.";
+        document.getElementById("blockScheduleButton")?.classList.remove("hidden");
         Swal.fire("Activo","Modo administrador activado.","success");
         renderAll();
       }else{
@@ -1002,6 +1028,8 @@
         document.getElementById("selectedAreaBadge").textContent = "Sin seleccionar";
         adminMode = false;
         document.getElementById("adminModeButton")?.classList.add("hidden");
+        document.getElementById("blockScheduleButton")?.classList.add("hidden");
+        document.getElementById("blockScheduleButton")?.classList.add("hidden");
       });
     }
 
@@ -1039,6 +1067,7 @@
       autoRefreshTimer = setInterval(() => {
         if(!currentArea || !backendConfigured()) return;
         refreshCalendarAppointmentsOnly(false);
+        refreshBlocksOnly(false);
         if(currentArea === "CALLBACKS") refreshBacklog(false);
       }, AUTO_REFRESH_MS);
     }
@@ -1050,6 +1079,7 @@
       }
 
       await refreshCalendarAppointmentsOnly(true);
+      await refreshBlocksOnly(false);
 
       if(currentArea === "CALLBACKS"){
         if(isViewActive("backlog")) await refreshBacklog(false);
@@ -1085,6 +1115,7 @@
 
       renderAll();
       refreshCalendarAppointmentsOnly(true);
+      refreshBlocksOnly(false);
     }
 
     function goToToday(){
@@ -1094,12 +1125,14 @@
 
       renderAll();
       refreshCalendarAppointmentsOnly(true);
+      refreshBlocksOnly(false);
     }
 
     function selectDate(day){
       currentSelectedDate = new Date(currentViewingYear,currentViewingMonth,day);
       renderAll();
       refreshCalendarAppointmentsOnly(true);
+      refreshBlocksOnly(false);
     }
 
     function changeMonth(offset){
@@ -1174,6 +1207,23 @@
       });
     }
 
+    function getBlockingRuleForSlot(atty, time){
+      const dateYMD = toYMD(currentSelectedDate);
+      const start = timeToMinutes(time);
+      const end = timeToMinutes(addMinutesToTime(time, 60));
+
+      return (blockedSlots || []).find(block => {
+        const blockDate = normalizeDateToYMD(block.date);
+        if(blockDate !== dateYMD) return false;
+        if(block.atty !== "ALL" && block.atty !== atty) return false;
+
+        const blockStart = timeToMinutes(block.start);
+        const blockEnd = timeToMinutes(block.end);
+
+        return start < blockEnd && end > blockStart;
+      }) || null;
+    }
+
     function renderAttyColumns(){
       const grid = document.getElementById("attyGrid");
       const timeCol = document.getElementById("timeLabels");
@@ -1189,10 +1239,18 @@
         for(let hour = START_HOUR; hour < END_HOUR; hour++){
           const cell = document.createElement("div");
           const slotValue = `${pad(hour)}:00`;
-          const enabled = isSlotAllowedForArea(currentArea, atty, slotValue, currentSelectedDate);
+          const blockRule = getBlockingRuleForSlot(atty, slotValue);
+          const enabled = isSlotAllowedForArea(currentArea, atty, slotValue, currentSelectedDate) && !blockRule;
 
           cell.className = enabled ? "hour-cell" : "hour-cell disabled-slot";
-          cell.title = enabled ? "Agendar callback" : "Horario bloqueado";
+          cell.title = blockRule ? (blockRule.reason || "Bloqueado") : (enabled ? "Agendar callback" : "Horario bloqueado");
+
+          if(blockRule){
+            const blockNote = document.createElement("div");
+            blockNote.className = "admin-block-note";
+            blockNote.textContent = blockRule.reason || "Bloqueado";
+            cell.appendChild(blockNote);
+          }
 
           if(hour === 16){
             const note = document.createElement("div");
@@ -1425,6 +1483,26 @@
       }
     }
 
+    async function refreshBlocksOnly(showOverlay = false){
+      if(!backendConfigured()) return;
+
+      try{
+        if(showOverlay) showLoading(true);
+
+        const day = toYMD(currentSelectedDate);
+        const res = await apiGet({action:"getBlocks", date:day, atty:"ALL"});
+
+        if(!res.success) throw new Error(res.message || "No se pudieron cargar bloqueos");
+
+        blockedSlots = Array.isArray(res.data) ? res.data : [];
+        renderAll();
+      }catch(err){
+        console.error(err);
+      }finally{
+        if(showOverlay) showLoading(false);
+      }
+    }
+
     async function loadAgenda(showOverlay = true){
       if(!backendConfigured()) return;
 
@@ -1641,7 +1719,7 @@
         area:document.getElementById("areaScheduledInput").value || currentArea
       };
 
-      const required = ["id","client","telephone","typeOfCase","currentStage","openCaseSince","caseInUSCIS","typeOfCall","description","callbackDate","time","endTime","atty","area"];
+      const required = ["id","client","typeOfCase","description","callbackDate","time","endTime","atty","area"];
       const missing = required.find(k => !payload[k]);
 
       if(missing){
@@ -1797,6 +1875,144 @@
         Swal.fire("Error", err.message || "No se pudo eliminar.", "error");
       }finally{
         showLoading(false);
+      }
+    }
+
+    async function openBlockScheduleModal(){
+      if(!adminMode){
+        Swal.fire("Modo admin requerido","Primero activa Modo Admin.","warning");
+        return;
+      }
+
+      const attyOptions = ['<option value="ALL">ALL - Todos los Attys</option>']
+        .concat(ALL_ATTORNEYS.map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`))
+        .join("");
+
+      const currentBlocks = (blockedSlots || []).map(b => `
+        <div class="border rounded p-2 mb-2">
+          <div><strong>${escapeHtml(b.atty || "ALL")}</strong> · ${escapeHtml(formatUSDateValue(b.date))}</div>
+          <div>${escapeHtml(formatTime(b.start))} - ${escapeHtml(formatTime(b.end))}</div>
+          <div class="text-danger fw-bold">${escapeHtml(b.reason || "")}</div>
+          <button class="btn btn-sm btn-outline-danger mt-1" onclick="deleteBlockFromModal('${escapeHtml(b.blockId)}')">Desactivar</button>
+        </div>
+      `).join("") || '<div class="text-muted small">No hay bloqueos activos para este día.</div>';
+
+      const result = await Swal.fire({
+        title:"Bloquear horario/día",
+        width:760,
+        html:`
+          <div class="text-start">
+            <div class="alert alert-light border small">
+              Para cerrar todo el día, usa Atty = ALL y horario 08:00 a 17:00.
+            </div>
+
+            <div class="row g-2">
+              <div class="col-md-4">
+                <label class="form-label small fw-bold">Fecha</label>
+                <input id="blockDateInput" type="date" class="form-control" value="${toYMD(currentSelectedDate)}">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-bold">Atty</label>
+                <select id="blockAttyInput" class="form-select">${attyOptions}</select>
+              </div>
+              <div class="col-md-2">
+                <label class="form-label small fw-bold">Inicio</label>
+                <input id="blockStartInput" type="time" class="form-control" value="08:00">
+              </div>
+              <div class="col-md-2">
+                <label class="form-label small fw-bold">Fin</label>
+                <input id="blockEndInput" type="time" class="form-control" value="17:00">
+              </div>
+              <div class="col-md-8">
+                <label class="form-label small fw-bold">Motivo / leyenda</label>
+                <input id="blockReasonInput" type="text" class="form-control" placeholder="Ej. Feriado PR / Attys no laboran">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-bold">Creado por</label>
+                <input id="blockCreatedByInput" type="text" class="form-control" placeholder="Tu nombre">
+              </div>
+            </div>
+
+            <hr>
+            <h6 class="fw-bold">Bloqueos activos de este día</h6>
+            <div style="max-height:220px;overflow:auto">${currentBlocks}</div>
+          </div>
+        `,
+        showCancelButton:true,
+        confirmButtonText:"Guardar bloqueo",
+        cancelButtonText:"Cerrar",
+        preConfirm:() => {
+          const block = {
+            date:document.getElementById("blockDateInput").value,
+            atty:document.getElementById("blockAttyInput").value,
+            start:document.getElementById("blockStartInput").value,
+            end:document.getElementById("blockEndInput").value,
+            reason:document.getElementById("blockReasonInput").value.trim(),
+            createdBy:document.getElementById("blockCreatedByInput").value.trim()
+          };
+
+          if(!block.date || !block.start || !block.end || !block.reason){
+            Swal.showValidationMessage("Fecha, inicio, fin y motivo son obligatorios.");
+            return false;
+          }
+
+          return block;
+        }
+      });
+
+      if(!result.isConfirmed) return;
+
+      try{
+        showLoading(true);
+        const res = await apiPost({
+          action:"saveBlock",
+          block:result.value,
+          adminPassword:ADMIN_MODE_PASSWORD
+        });
+
+        if(res.success){
+          await refreshBlocksOnly(false);
+          Swal.fire("Guardado","Bloqueo guardado correctamente.","success");
+        }else{
+          Swal.fire("Error",res.message || "No se pudo guardar bloqueo.","error");
+        }
+      }catch(err){
+        Swal.fire("Error",err.message || "No se pudo guardar bloqueo.","error");
+      }finally{
+        showLoading(false);
+      }
+    }
+
+    async function deleteBlockFromModal(blockId){
+      try{
+        const result = await Swal.fire({
+          title:"¿Desactivar bloqueo?",
+          icon:"question",
+          showCancelButton:true,
+          confirmButtonText:"Sí, desactivar",
+          cancelButtonText:"Cancelar"
+        });
+
+        if(!result.isConfirmed) return;
+
+        showLoading(true);
+        const res = await apiPost({
+          action:"deleteBlock",
+          blockId,
+          adminPassword:ADMIN_MODE_PASSWORD
+        });
+
+        showLoading(false);
+
+        if(res.success){
+          await refreshBlocksOnly(false);
+          Swal.fire("Listo","Bloqueo desactivado.","success");
+        }else{
+          Swal.fire("Error",res.message || "No se pudo desactivar bloqueo.","error");
+        }
+      }catch(err){
+        showLoading(false);
+        Swal.fire("Error",err.message || "No se pudo desactivar bloqueo.","error");
       }
     }
 
@@ -1986,19 +2202,24 @@
       if(value instanceof Date && !isNaN(value.getTime())) return toYMD(value);
 
       const raw = String(value).trim();
-      if(!raw) return "";
 
       let m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
       if(m) return `${m[1]}-${m[2]}-${m[3]}`;
 
       m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-      if(m) return `${m[3]}-${pad(Number(m[1]))}-${pad(Number(m[2]))}`;
+      if(m){
+        const d = pad(Number(m[1]));
+        const mo = pad(Number(m[2]));
+        const y = m[3];
+        return `${y}-${mo}-${d}`;
+      }
 
-      const d = new Date(raw);
-      if(!isNaN(d.getTime())) return toYMD(d);
+      const parsed = new Date(raw);
+      if(!isNaN(parsed.getTime())) return toYMD(parsed);
 
-      return "";
+      return raw;
     }
+
 
     function formatUSDateValue(value){
       if(!value) return "";
