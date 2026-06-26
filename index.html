@@ -1223,8 +1223,10 @@
       const end = timeToMinutes(addMinutesToTime(time, 60));
 
       return (blockedSlots || []).find(block => {
+        const recurrent = String(block.recurrent || "").trim().toUpperCase();
         const blockDate = normalizeDateToYMD(block.date);
-        if(blockDate !== dateYMD) return false;
+
+        if(recurrent !== "DAILY" && blockDate !== dateYMD) return false;
 
         const blockAtty = String(block.atty || "ALL").trim().toUpperCase();
         if(blockAtty !== "ALL" && blockAtty !== String(atty || "").trim().toUpperCase()) return false;
@@ -1235,6 +1237,7 @@
         return start < blockEnd && end > blockStart;
       }) || null;
     }
+
 
 
     function renderAttyColumns(){
@@ -1925,7 +1928,7 @@
         html:`
           <div class="text-start">
             <div class="alert alert-light border small">
-              Para cerrar todo el día, usa Atty = ALL y horario 08:00 a 17:00.
+              Para cerrar todo el día, usa Atty = ALL y horario 08:00 a 17:00. Para que aplique siempre, usa Recurrente = DAILY.
             </div>
 
             <div class="row g-2">
@@ -1953,6 +1956,13 @@
                 <label class="form-label small fw-bold">Creado por</label>
                 <input id="blockCreatedByInput" type="text" class="form-control" placeholder="Tu nombre">
               </div>
+              <div class="col-md-4">
+                <label class="form-label small fw-bold">Recurrente</label>
+                <select id="blockRecurrentInput" class="form-select">
+                  <option value="">Solo esta fecha</option>
+                  <option value="DAILY">DAILY - Todos los días</option>
+                </select>
+              </div>
             </div>
 
             <hr>
@@ -1970,7 +1980,8 @@
             start:document.getElementById("blockStartInput").value,
             end:document.getElementById("blockEndInput").value,
             reason:document.getElementById("blockReasonInput").value.trim(),
-            createdBy:document.getElementById("blockCreatedByInput").value.trim()
+            createdBy:document.getElementById("blockCreatedByInput").value.trim(),
+            recurrent:document.getElementById("blockRecurrentInput") ? document.getElementById("blockRecurrentInput").value : ""
           };
 
           if(!block.date || !block.start || !block.end || !block.reason){
@@ -2221,6 +2232,8 @@
     function normalizeDateToYMD(value){
       if(!value) return "";
 
+      if(String(value).trim().toUpperCase() === "ALL") return "ALL";
+
       if(value instanceof Date && !isNaN(value.getTime())) return toYMD(value);
 
       const raw = String(value).trim();
@@ -2228,7 +2241,6 @@
       let m = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
       if(m) return `${m[1]}-${pad(Number(m[2]))}-${pad(Number(m[3]))}`;
 
-      // DD/MM/YYYY
       m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
       if(m){
         return `${m[3]}-${pad(Number(m[2]))}-${pad(Number(m[1]))}`;
@@ -2239,6 +2251,7 @@
 
       return raw;
     }
+
 
 
 
